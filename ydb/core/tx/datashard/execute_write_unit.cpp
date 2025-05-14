@@ -211,6 +211,12 @@ public:
                     userDb.UpdateRow(fullTableId, key, ops);
                     break;
                 }
+
+                case NKikimrDataEvents::TEvWrite::TOperation::OPERATION_INCREMENT: {
+                    //FillOps(scheme, userTable, tableInfo, validatedOperation, rowIdx, ops);
+                    //userDb.UpdateRow(fullTableId, key, ops);
+                    break;
+                }
                 default:
                     // Checked before in TWriteOperation
                     Y_ENSURE(false, operationType << " operation is not supported now");

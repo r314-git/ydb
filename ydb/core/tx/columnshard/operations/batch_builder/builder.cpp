@@ -81,6 +81,10 @@ void TBuildBatchesTask::DoExecute(const std::shared_ptr<ITask>& /*taskPtr*/) {
             merger = std::make_shared<TUpdateMerger>(batch, Context.GetActualSchema(), "");
             break;
         }
+        case NEvWrite::EModificationType::Increment: {
+            merger = std::make_shared<TUpdateMerger>(batch, Context.GetActualSchema(), "");
+            break;
+        }
         case NEvWrite::EModificationType::Replace:
         case NEvWrite::EModificationType::Delete: {
             if (!WriteData.GetWritePortions() || !Context.GetNoTxWrite()) {
