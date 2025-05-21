@@ -213,8 +213,8 @@ public:
                 }
 
                 case NKikimrDataEvents::TEvWrite::TOperation::OPERATION_INCREMENT: {
-                    //FillOps(scheme, userTable, tableInfo, validatedOperation, rowIdx, ops);
-                    //userDb.UpdateRow(fullTableId, key, ops);
+                    FillOps(scheme, userTable, tableInfo, validatedOperation, rowIdx, ops);
+                    userDb.IncrementRow(fullTableId, key, ops);
                     break;
                 }
                 default:

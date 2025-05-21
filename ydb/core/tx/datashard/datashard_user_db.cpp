@@ -163,6 +163,27 @@ void TDataShardUserDb::UpdateRow(
     IncreaseUpdateCounters(key, ops);
 }
 
+void TDataShardUserDb::IncrementRow(
+    const TTableId& tableId,
+    const TArrayRef<const TRawTypeValue> key,
+    const TArrayRef<const NIceDb::TUpdateOp> ops) // !! TIncrementOp 
+{
+    auto localTableId = Self.GetLocalTableId(tableId);
+    Y_ENSURE(localTableId != 0, "Unexpected incrementRow for an unknown table");
+
+    auto currentRow = NTable::TRowState();
+    try {
+        currentRow = RowData(tableId, key);
+    } catch (yexception error) {
+        //
+        return;
+    }
+    
+    IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
+
+    IncreaseUpdateCounters(key, ops);
+}
+
 void TDataShardUserDb::EraseRow(
     const TTableId& tableId,
     const TArrayRef<const TRawTypeValue> key)
@@ -243,6 +264,103 @@ void TDataShardUserDb::UpsertRowInt(
     Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
+void TDataShardUserDb::IncrementRowInt(
+    NTable::ERowOp rowOp,
+    const TTableId& tableId,
+    ui64 localTableId,
+    const TArrayRef<const TRawTypeValue> key,
+    const TArrayRef<const NIceDb::TUpdateOp> ops,
+    NTable::TRowState row) 
+{
+    // TODO !!!
+    TSmallVec<TCell> keyCells = ConvertTableKeys(key);
+
+    CheckWriteConflicts(tableId, keyCells);
+
+    if (LockTxId) {
+        Self.SysLocksTable().SetWriteLock(tableId, keyCells);
+    } else {
+        Self.SysLocksTable().BreakLocks(tableId, keyCells);
+    }
+    Self.SetTableUpdateTime(tableId, Now);
+
+    auto* collector = GetChangeCollector(tableId);
+
+
+    TArrayRef<const NIceDb::TUpdateOp> newOps = ops;
+
+    /////
+
+    void AddValueToCells(ui64 value, const TString& columnType, TVector<TCell>& cells, TVector<TString>& stringValues) {
+        if (columnType == "Uint64") {
+            cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
+        } else if (columnType == "Uint32") {
+            ui32 value32 = (ui32)value;
+            cells.emplace_back(TCell((const char*)&value32, sizeof(ui32)));
+        } else if (columnType == "Int32") {
+            i32 value32 = (i32)value;
+            cells.push_back(TCell::Make(value32));
+        } else if (columnType == "Utf8") {
+            stringValues.emplace_back(Sprintf("String_%" PRIu64, value));
+            cells.emplace_back(TCell(stringValues.back().c_str(), stringValues.back().size()));
+        } else {
+            Y_ENSURE(false, "Unsupported column type " << columnType);
+        }
+    }
+
+    std::vector<ui32> columnIds = {1, 2};
+
+    TVector<TString> stringValues;
+    TVector<TCell> cells;
+
+    cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
+    AddValueToCells(key, columns[0].Type, cells, stringValues);
+    AddValueToCells(value, columns[1].Type, cells, stringValues);
+
+    TSerializedCellMatrix matrix(cells, 1, 2);
+    TString blobData = matrix.ReleaseBuffer();
+
+    std::unique_ptr<NKikimr::NEvents::TDataEvents::TEvWrite> evWrite = txId ? std::make_unique<NKikimr::NEvents::TDataEvents::TEvWrite>(*txId, txMode) : std::make_unique<NKikimr::NEvents::TDataEvents::TEvWrite>(txMode);
+    ui64 payloadIndex = NKikimr::NEvWrite::TPayloadWriter<NKikimr::NEvents::TDataEvents::TEvWrite>(*evWrite).AddDataToPayload(std::move(blobData));
+    evWrite->AddOperation(operationType, tableId, columnIds, payloadIndex, NKikimrDataEvents::FORMAT_CELLVEC);
+
+    // TODO for columns += 
+    /////
+
+
+    for(size_t i = 0; i < ops.size(); i ++)
+    {
+        // проверка типов
+        // приведение типов
+        Y_ENSURE(ops[i].Value.Type() == );
+
+        newOps[i].Value = row.Get(i).AsValue<ui32>() + ops.at(i).Value;
+    }
+
+    const ui64 writeTxId = GetWriteTxId(tableId);
+    if (writeTxId == 0) {
+        if (collector && !collector->OnUpdate(tableId, localTableId, rowOp, key, newOps, WriteVersion))
+            throw TNotReadyTabletException();
+
+        Db.Update(localTableId, rowOp, key, newOps, WriteVersion);
+    } else {
+        if (collector && !collector->OnUpdateTx(tableId, localTableId, rowOp, key, newOps, writeTxId))
+            throw TNotReadyTabletException();
+
+        Db.UpdateTx(localTableId, rowOp, key, newOps, writeTxId);
+    }
+
+    if (VolatileTxId) {
+        Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, VolatileTxId, Db);
+    } else if (LockTxId) {
+        Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, LockTxId, Db);
+    } else {
+        Self.GetConflictsCache().GetTableCache(localTableId).RemoveUncommittedWrites(keyCells, Db);
+    }
+
+    Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
+}
+
 bool TDataShardUserDb::RowExists (
     const TTableId& tableId,
     const TArrayRef<const TRawTypeValue> key) 
@@ -261,6 +379,26 @@ bool TDataShardUserDb::RowExists (
         }
     }
 }
+NTable::TRowState TDataShardUserDb::RowData (
+    const TTableId& tableId,
+    const TArrayRef<const TRawTypeValue> key) 
+{
+    NTable::TRowState rowState;
+
+    const auto ready = SelectRow(tableId, key, {}, rowState);
+    switch (ready) {
+        case NTable::EReady::Page: {
+            throw TNotReadyTabletException();
+        }
+        case NTable::EReady::Data: {
+            return rowState;
+        }
+        case NTable::EReady::Gone: {
+            throw TNotReadyTabletException(); // TODO иная ошибка 
+        }
+    }
+}
+
 
 TSmallVec<TCell> TDataShardUserDb::ConvertTableKeys(const TArrayRef<const TRawTypeValue> key)
 {
