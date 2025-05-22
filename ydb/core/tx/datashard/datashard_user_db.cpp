@@ -265,24 +265,6 @@ void TDataShardUserDb::UpsertRowInt(
     Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
-//example
-// void AddValueToCells(ui64 value, const TString& columnType, TVector<TCell>& cells, TVector<TString>& stringValues) {
-//     if (columnType == "Uint64") {
-//         cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
-//     } else if (columnType == "Uint32") {
-//         ui32 value32 = (ui32)value;
-//         cells.emplace_back(TCell((const char*)&value32, sizeof(ui32)));
-//     } else if (columnType == "Int32") {
-//         i32 value32 = (i32)value;
-//         cells.push_back(TCell::Make(value32));
-//     } else if (columnType == "Utf8") {
-//         stringValues.emplace_back(Sprintf("String_%" PRIu64, value));
-//         cells.emplace_back(TCell(stringValues.back().c_str(), stringValues.back().size()));
-//     } else {
-//         Y_ENSURE(false, "Unsupported column type " << columnType);
-//     }
-// }
-
 void TDataShardUserDb::IncrementRowInt(
     NTable::ERowOp rowOp,
     const TTableId& tableId,
@@ -291,7 +273,6 @@ void TDataShardUserDb::IncrementRowInt(
     const TArrayRef<const NIceDb::TUpdateOp> ops,
     NTable::TRowState row) 
 {
-    // TODO !!!
     TSmallVec<TCell> keyCells = ConvertTableKeys(key);
 
     CheckWriteConflicts(tableId, keyCells);
@@ -307,7 +288,7 @@ void TDataShardUserDb::IncrementRowInt(
 
     TArrayRef<const NIceDb::TUpdateOp> newOps = ops;
 
-    /////
+    // TODO !!!
 
     for(size_t i = 0; i < ops.size(); i ++)
     {
@@ -315,7 +296,9 @@ void TDataShardUserDb::IncrementRowInt(
         // приведение типов
         Y_ENSURE(ops[i].Value.Type() == ?? );
 
-        newOps[i].Value = row.Get(i) + ops.at(i).Value;
+        auto value = row.Get(i).AsValue<ui32>() + ops.at(i).Value;
+
+        newOps[i].Value = TRawTypeValue(value);
     }
 
     const ui64 writeTxId = GetWriteTxId(tableId);
