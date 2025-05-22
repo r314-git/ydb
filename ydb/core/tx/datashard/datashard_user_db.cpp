@@ -1,6 +1,7 @@
 #include "datashard_user_db.h"
 
 #include "datashard_impl.h"
+#include <ydb/core/tx/data_events/payload_helper.h>
 
 namespace NKikimr::NDataShard {
 
@@ -264,6 +265,24 @@ void TDataShardUserDb::UpsertRowInt(
     Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
+//example
+// void AddValueToCells(ui64 value, const TString& columnType, TVector<TCell>& cells, TVector<TString>& stringValues) {
+//     if (columnType == "Uint64") {
+//         cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
+//     } else if (columnType == "Uint32") {
+//         ui32 value32 = (ui32)value;
+//         cells.emplace_back(TCell((const char*)&value32, sizeof(ui32)));
+//     } else if (columnType == "Int32") {
+//         i32 value32 = (i32)value;
+//         cells.push_back(TCell::Make(value32));
+//     } else if (columnType == "Utf8") {
+//         stringValues.emplace_back(Sprintf("String_%" PRIu64, value));
+//         cells.emplace_back(TCell(stringValues.back().c_str(), stringValues.back().size()));
+//     } else {
+//         Y_ENSURE(false, "Unsupported column type " << columnType);
+//     }
+// }
+
 void TDataShardUserDb::IncrementRowInt(
     NTable::ERowOp rowOp,
     const TTableId& tableId,
@@ -286,55 +305,17 @@ void TDataShardUserDb::IncrementRowInt(
 
     auto* collector = GetChangeCollector(tableId);
 
-
     TArrayRef<const NIceDb::TUpdateOp> newOps = ops;
 
     /////
-
-    void AddValueToCells(ui64 value, const TString& columnType, TVector<TCell>& cells, TVector<TString>& stringValues) {
-        if (columnType == "Uint64") {
-            cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
-        } else if (columnType == "Uint32") {
-            ui32 value32 = (ui32)value;
-            cells.emplace_back(TCell((const char*)&value32, sizeof(ui32)));
-        } else if (columnType == "Int32") {
-            i32 value32 = (i32)value;
-            cells.push_back(TCell::Make(value32));
-        } else if (columnType == "Utf8") {
-            stringValues.emplace_back(Sprintf("String_%" PRIu64, value));
-            cells.emplace_back(TCell(stringValues.back().c_str(), stringValues.back().size()));
-        } else {
-            Y_ENSURE(false, "Unsupported column type " << columnType);
-        }
-    }
-
-    std::vector<ui32> columnIds = {1, 2};
-
-    TVector<TString> stringValues;
-    TVector<TCell> cells;
-
-    cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
-    AddValueToCells(key, columns[0].Type, cells, stringValues);
-    AddValueToCells(value, columns[1].Type, cells, stringValues);
-
-    TSerializedCellMatrix matrix(cells, 1, 2);
-    TString blobData = matrix.ReleaseBuffer();
-
-    std::unique_ptr<NKikimr::NEvents::TDataEvents::TEvWrite> evWrite = txId ? std::make_unique<NKikimr::NEvents::TDataEvents::TEvWrite>(*txId, txMode) : std::make_unique<NKikimr::NEvents::TDataEvents::TEvWrite>(txMode);
-    ui64 payloadIndex = NKikimr::NEvWrite::TPayloadWriter<NKikimr::NEvents::TDataEvents::TEvWrite>(*evWrite).AddDataToPayload(std::move(blobData));
-    evWrite->AddOperation(operationType, tableId, columnIds, payloadIndex, NKikimrDataEvents::FORMAT_CELLVEC);
-
-    // TODO for columns += 
-    /////
-
 
     for(size_t i = 0; i < ops.size(); i ++)
     {
         // проверка типов
         // приведение типов
-        Y_ENSURE(ops[i].Value.Type() == );
+        Y_ENSURE(ops[i].Value.Type() == ?? );
 
-        newOps[i].Value = row.Get(i).AsValue<ui32>() + ops.at(i).Value;
+        newOps[i].Value = row.Get(i) + ops.at(i).Value;
     }
 
     const ui64 writeTxId = GetWriteTxId(tableId);
