@@ -196,7 +196,7 @@ private:
     void UpsertRowInt(NTable::ERowOp rowOp, const TTableId& tableId, ui64 localTableId, const TArrayRef<const TRawTypeValue> key, const TArrayRef<const NIceDb::TUpdateOp> ops);
     void IncrementRowInt(NTable::ERowOp rowOp, const TTableId& tableId, ui64 localTableId, const TArrayRef<const TRawTypeValue> key, const TArrayRef<const NIceDb::TUpdateOp> ops, NTable::TRowState row);
     bool RowExists(const TTableId& tableId, const TArrayRef<const TRawTypeValue> key);
-    NTable::TRowState RowData(const TTableId& tableId, const TArrayRef<const TRawTypeValue> key);
+    NTable::TRowState RowData(const TTableId& tableId, const TArrayRef<const TRawTypeValue> key, TVector<NTable::TTag> columns);
 
     void IncreaseUpdateCounters(const TArrayRef<const TRawTypeValue> key, const TArrayRef<const NIceDb::TUpdateOp> ops);
 private:

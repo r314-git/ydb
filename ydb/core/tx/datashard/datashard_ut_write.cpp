@@ -16,6 +16,7 @@ using namespace Tests;
 
 Y_UNIT_TEST_SUITE(DataShardWrite) {
 
+    constexpr i16 operator""_i16(unsigned long long val) { return static_cast<i16>(val); }
     constexpr i32 operator""_i32(unsigned long long val) { return static_cast<i32>(val); }
     constexpr ui32 operator""_ui32(unsigned long long val) { return static_cast<ui32>(val); }
 
@@ -101,7 +102,7 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         }
         Cout << "========= Send immediate increment, no affect (5-> +3) =========\n";
         {   
-            Increment(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, { 1_ui32, 3_ui32 }, {TCell::Make(5_i32),TCell::Make(3_i32)});
+            Increment(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, { 1_ui32, 2_ui32 }, {TCell::Make(5_i32),TCell::Make(3_i32)});
         }
 
         Cout << "========= Read table =========\n";
@@ -112,14 +113,14 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
 
         Cout << "========= Send immediate increment, change several rows (2-> +3, 4 -> +4) =========\n";
         {   
-            Increment(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, { 1_ui32, 3_ui32 }, {TCell::Make(2_i32),TCell::Make(3_i32),
+            Increment(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, { 1_ui32, 2_ui32 }, {TCell::Make(2_i32),TCell::Make(3_i32),
                                                                                                                                                                           TCell::Make(4_i32),TCell::Make(4_i32) });
         }
 
         Cout << "========= Read table =========\n";
         {
             auto tableState = ReadTable(server, shards, tableId);
-            UNIT_ASSERT_VALUES_EQUAL(tableState, "key = 0, value = 1\nkey = 2, value = 5\nkey = 4, value = 9\n");
+            UNIT_ASSERT_VALUES_EQUAL(tableState, "key = 0, value = 1\nkey = 2, value = 6\nkey = 4, value = 9\n");
         }
     }
     

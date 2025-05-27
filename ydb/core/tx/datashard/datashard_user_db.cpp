@@ -174,13 +174,16 @@ void TDataShardUserDb::IncrementRow(
 
     auto currentRow = NTable::TRowState();
     try {
-        currentRow = RowData(tableId, key);
+        TVector<NTable::TTag> columns;
+        for(auto x : ops)
+            columns.push_back(x.Tag);        
+        currentRow = RowData(tableId, key, columns);
     } catch (yexception error) {
         //
         return;
     }
-    
-    IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
+    if(currentRow.Size() != 0)
+        IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
 
     IncreaseUpdateCounters(key, ops);
 }
@@ -286,19 +289,63 @@ void TDataShardUserDb::IncrementRowInt(
 
     auto* collector = GetChangeCollector(tableId);
 
-    TArrayRef<const NIceDb::TUpdateOp> newOps = ops;
+    TVector<NIceDb::TUpdateOp> newOps;
 
     // TODO !!!
-
+    auto xx = row.Size();
+    auto yy = ops.size();
+    std::cerr << xx << " " << yy << std::endl;
+    Y_ENSURE(row.Size() == ops.size());
     for(size_t i = 0; i < ops.size(); i ++)
     {
         // проверка типов
         // приведение типов
-        Y_ENSURE(ops[i].Value.Type() == ?? );
+       //Y_ENSURE(ops[i].Value.Type() == ?? );
+        auto current = row.Get(i);
+        auto add  = ops[i].AsCell();
 
-        auto value = row.Get(i).AsValue<ui32>() + ops.at(i).Value;
+        auto value = add;
+        
 
-        newOps[i].Value = TRawTypeValue(value);
+        // auto addExtendedOp = [&scheme, &tableInfo, &extendedOps](const ui64 columnTag, const ui64& columnValue) {
+        //     const NScheme::TTypeId vtype = scheme.GetColumnInfo(tableInfo, columnTag)->PType.GetTypeId();
+        //     const char* ptr = static_cast<const char*>(static_cast<const void*>(&columnValue));
+        //     TRawTypeValue rawTypeValue(ptr, sizeof(ui64), vtype);
+        //     NIceDb::TUpdateOp extOp(columnTag, NTable::ECellOp::Set, rawTypeValue);
+        //     extendedOps.emplace_back(extOp);
+        // };
+                 
+        auto typeRow = ops[i].Value.Type();
+        std::cerr << typeRow << std::endl;
+        NScheme::TTypeId a = 2;// 2 is for int16, 4 - int32
+        
+        auto localTableId2 = Self.GetLocalTableId(tableId);
+        Y_ENSURE(localTableId == localTableId2, "Unexpected UpdateRow for an unknown table");
+    
+        std::cerr << a << std::endl;
+        const NTable::TScheme& scheme = Db.GetScheme();
+        const NTable::TScheme::TTableInfo* tableInfo = scheme.GetTableInfo(localTableId);
+
+        auto vtype = scheme.GetColumnInfo(tableInfo, ops[i].Tag)->PType.GetTypeId();
+        std::cerr << vtype << std::endl;
+        
+        auto x = current.AsValue<ui32>(); // посмотреть в схеме
+        auto y = add.AsValue<ui32>();
+
+        value = TCell::Make((ui32)(x + y));
+        //row.Get(i).AsValue<ui32>() + *static_cast<int*>( ops.at(i).Value.Data());
+        
+        //TRawTypeValue newValue = value.AsValue<TRawTypeValue>(); 
+
+        //
+        const char* ptr = static_cast<const char*>(static_cast<const void*>(&value));
+            TRawTypeValue rawTypeValue(ptr, sizeof(ui32), vtype);//sizeof(ui64)
+            //NIceDb::TUpdateOp extOp(columnTag, NTable::ECellOp::Set, rawTypeValue);
+            //extendedOps.emplace_back(extOp);
+        //
+        newOps.push_back(ops[i]); // вектор?
+        newOps[i].Value = rawTypeValue;//TRawTypeValue((void)value.AsBuf(), sizeof(value.AsBuf()), vtype);
+        //newOps[i].Op = new NTable::TCellOp(value);
     }
 
     const ui64 writeTxId = GetWriteTxId(tableId);
@@ -330,7 +377,7 @@ bool TDataShardUserDb::RowExists (
     const TArrayRef<const TRawTypeValue> key) 
 {
     NTable::TRowState rowState;
-    const auto ready = SelectRow(tableId, key, {}, rowState);
+    const auto ready = SelectRow(tableId, key, {}, rowState);// максим юрчук - гит, теги - что записать
     switch (ready) {
         case NTable::EReady::Page: {
             throw TNotReadyTabletException();
@@ -345,17 +392,18 @@ bool TDataShardUserDb::RowExists (
 }
 NTable::TRowState TDataShardUserDb::RowData (
     const TTableId& tableId,
-    const TArrayRef<const TRawTypeValue> key) 
+    const TArrayRef<const TRawTypeValue> key,
+    TVector<NTable::TTag> columns) 
 {
     NTable::TRowState rowState;
 
-    const auto ready = SelectRow(tableId, key, {}, rowState);
+    const auto ready = SelectRow(tableId, key, columns, rowState);
     switch (ready) {
         case NTable::EReady::Page: {
             throw TNotReadyTabletException();
         }
         case NTable::EReady::Data: {
-            return rowState;
+            return rowState; // move
         }
         case NTable::EReady::Gone: {
             throw TNotReadyTabletException(); // TODO иная ошибка 
