@@ -73,12 +73,22 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         auto [runtime, server, sender] = TestCreateServer();
 
         TShardedTableOptions opts;
+
+        // todo
+        // развить идею столбцов
+        // auto opts = TShardedTableOptions().Columns({{"key64", "Uint64", true, false}, {"key32", "Uint32", true, false},
+        //    {"value64", "Uint64", false, false}, {"value32", "Uint32", false, false}, {"valueUtf8", "Utf8", false, false}});
+
+
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
         const ui64 shard = shards[0];
         const ui32 rowCount = 3;
 
         ui64 txId = 100;
 
+        // upsert - increment - read
+        // отдельно инкремент других типов
+        // на каждый иф тест
         Cout << "========= Send immediate update to empty table, it should be no op =========\n";
         {
             Update(runtime, sender, shard, tableId, opts.Columns_, rowCount, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE);

@@ -1,6 +1,7 @@
 #include "datashard_user_db.h"
 
 #include "datashard_impl.h"
+#include <ydb/core/io_formats/cell_maker/cell_maker.h>
 #include <ydb/core/tx/data_events/payload_helper.h>
 
 namespace NKikimr::NDataShard {
@@ -268,7 +269,7 @@ void TDataShardUserDb::UpsertRowInt(
     Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
-void TDataShardUserDb::IncrementRowInt(
+void TDataShardUserDb::IncrementRowInt( // вызывать upsert
     NTable::ERowOp rowOp,
     const TTableId& tableId,
     ui64 localTableId,
@@ -276,18 +277,18 @@ void TDataShardUserDb::IncrementRowInt(
     const TArrayRef<const NIceDb::TUpdateOp> ops,
     NTable::TRowState row) 
 {
-    TSmallVec<TCell> keyCells = ConvertTableKeys(key);
+    // TSmallVec<TCell> keyCells = ConvertTableKeys(key);
 
-    CheckWriteConflicts(tableId, keyCells);
+    // CheckWriteConflicts(tableId, keyCells);
 
-    if (LockTxId) {
-        Self.SysLocksTable().SetWriteLock(tableId, keyCells);
-    } else {
-        Self.SysLocksTable().BreakLocks(tableId, keyCells);
-    }
-    Self.SetTableUpdateTime(tableId, Now);
+    // if (LockTxId) {
+    //     Self.SysLocksTable().SetWriteLock(tableId, keyCells);
+    // } else {
+    //     Self.SysLocksTable().BreakLocks(tableId, keyCells);
+    // }
+    // Self.SetTableUpdateTime(tableId, Now);
 
-    auto* collector = GetChangeCollector(tableId);
+    // auto* collector = GetChangeCollector(tableId);
 
     TVector<NIceDb::TUpdateOp> newOps;
 
@@ -297,44 +298,57 @@ void TDataShardUserDb::IncrementRowInt(
 
     for(size_t i = 0; i < ops.size(); i ++)
     {
+        auto vtype = scheme.GetColumnInfo(tableInfo, ops[i].Tag)->PType.GetTypeId();
         // todo вынести в фунецию отдельно с типы
+        
+
+        // auto current = row.Get(i);
+        // auto add  = ops[i].AsCell();
+        // auto x = current.AsValue<ui32>(); // посмотреть в схеме
+        // auto y = add.AsValue<ui32>();
+        // auto value = TCell::Make((ui32)(x + y));
+        
+
+        // с использование функции add
         auto current = row.Get(i);
         auto add  = ops[i].AsCell();
-        auto x = current.AsValue<ui32>(); // посмотреть в схеме
-        auto y = add.AsValue<ui32>();
+        TCell value;
+        TString message;
+        auto success = NFormats::AddTwoCell(current, add, value, vtype, message); //  message
+        if(! success)
+            return; // ?? todo
+        //
 
-        auto vtype = scheme.GetColumnInfo(tableInfo, ops[i].Tag)->PType.GetTypeId();
-        auto value = TCell::Make((ui32)(x + y));
-       
         const char* ptr = static_cast<const char*>(static_cast<const void*>(&value));
-        TRawTypeValue rawTypeValue(ptr, sizeof(ui32), vtype);
+        TRawTypeValue rawTypeValue(ptr, sizeof(value.Size()), vtype); // sizeof!
            
         newOps.push_back(ops[i]);
         newOps[i].Value = rawTypeValue;
     }
 
-    const ui64 writeTxId = GetWriteTxId(tableId);
-    if (writeTxId == 0) {
-        if (collector && !collector->OnUpdate(tableId, localTableId, rowOp, key, newOps, WriteVersion))
-            throw TNotReadyTabletException();
+    UpsertRowInt(rowOp, tableId, localTableId, key, newOps);
+    // const ui64 writeTxId = GetWriteTxId(tableId);
+    // if (writeTxId == 0) {
+    //     if (collector && !collector->OnUpdate(tableId, localTableId, rowOp, key, newOps, WriteVersion))
+    //         throw TNotReadyTabletException();
 
-        Db.Update(localTableId, rowOp, key, newOps, WriteVersion);
-    } else {
-        if (collector && !collector->OnUpdateTx(tableId, localTableId, rowOp, key, newOps, writeTxId))
-            throw TNotReadyTabletException();
+    //     Db.Update(localTableId, rowOp, key, newOps, WriteVersion);
+    // } else {
+    //     if (collector && !collector->OnUpdateTx(tableId, localTableId, rowOp, key, newOps, writeTxId))
+    //         throw TNotReadyTabletException();
 
-        Db.UpdateTx(localTableId, rowOp, key, newOps, writeTxId);
-    }
+    //     Db.UpdateTx(localTableId, rowOp, key, newOps, writeTxId);
+    // }
 
-    if (VolatileTxId) {
-        Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, VolatileTxId, Db);
-    } else if (LockTxId) {
-        Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, LockTxId, Db);
-    } else {
-        Self.GetConflictsCache().GetTableCache(localTableId).RemoveUncommittedWrites(keyCells, Db);
-    }
+    // if (VolatileTxId) {
+    //     Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, VolatileTxId, Db);
+    // } else if (LockTxId) {
+    //     Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, LockTxId, Db);
+    // } else {
+    //     Self.GetConflictsCache().GetTableCache(localTableId).RemoveUncommittedWrites(keyCells, Db);
+    // }
 
-    Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
+    // Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
 bool TDataShardUserDb::RowExists (
@@ -355,7 +369,7 @@ bool TDataShardUserDb::RowExists (
         }
     }
 }
-NTable::TRowState TDataShardUserDb::RowData (
+NTable::TRowState TDataShardUserDb::RowData ( // todo переимменовать
     const TTableId& tableId,
     const TArrayRef<const TRawTypeValue> key,
     TVector<NTable::TTag> columns) 
@@ -371,7 +385,7 @@ NTable::TRowState TDataShardUserDb::RowData (
             return std::move(rowState);
         }
         case NTable::EReady::Gone: {
-            throw TNotReadyTabletException(); // TODO иная ошибка 
+            throw TNotReadyTabletException(); // спросить у никиты  TUniqueConstrainException();
         }
     }
 }
