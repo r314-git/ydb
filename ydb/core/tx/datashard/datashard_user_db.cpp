@@ -174,17 +174,16 @@ void TDataShardUserDb::IncrementRow(
     Y_ENSURE(localTableId != 0, "Unexpected incrementRow for an unknown table");
 
     auto currentRow = NTable::TRowState();
-    try {
-        TVector<NTable::TTag> columns;
-        for(auto x : ops)
-            columns.push_back(x.Tag);        
-        currentRow = RowData(tableId, key, columns);
-    } catch (yexception error) {
-        //
-        return;
-    }
-    if(currentRow.Size() != 0)
-        IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
+ 
+    TVector<NTable::TTag> columns;
+    for(auto op : ops)
+        columns.push_back(op.Tag);        
+    currentRow = RowData(tableId, key, columns);
+
+    if(currentRow.Size() == 0)
+        return; // или исключение - мы не можем инкременить строку
+    
+    IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
 
     IncreaseUpdateCounters(key, ops);
 }
@@ -269,7 +268,7 @@ void TDataShardUserDb::UpsertRowInt(
     Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
-void TDataShardUserDb::IncrementRowInt( // вызывать upsert
+void TDataShardUserDb::IncrementRowInt(
     NTable::ERowOp rowOp,
     const TTableId& tableId,
     ui64 localTableId,
@@ -277,19 +276,6 @@ void TDataShardUserDb::IncrementRowInt( // вызывать upsert
     const TArrayRef<const NIceDb::TUpdateOp> ops,
     NTable::TRowState row) 
 {
-    // TSmallVec<TCell> keyCells = ConvertTableKeys(key);
-
-    // CheckWriteConflicts(tableId, keyCells);
-
-    // if (LockTxId) {
-    //     Self.SysLocksTable().SetWriteLock(tableId, keyCells);
-    // } else {
-    //     Self.SysLocksTable().BreakLocks(tableId, keyCells);
-    // }
-    // Self.SetTableUpdateTime(tableId, Now);
-
-    // auto* collector = GetChangeCollector(tableId);
-
     TVector<NIceDb::TUpdateOp> newOps;
 
     Y_ENSURE(row.Size() == ops.size());
@@ -299,17 +285,7 @@ void TDataShardUserDb::IncrementRowInt( // вызывать upsert
     for(size_t i = 0; i < ops.size(); i ++)
     {
         auto vtype = scheme.GetColumnInfo(tableInfo, ops[i].Tag)->PType.GetTypeId();
-        // todo вынести в фунецию отдельно с типы
-        
-
-        // auto current = row.Get(i);
-        // auto add  = ops[i].AsCell();
-        // auto x = current.AsValue<ui32>(); // посмотреть в схеме
-        // auto y = add.AsValue<ui32>();
-        // auto value = TCell::Make((ui32)(x + y));
-        
-
-        // с использование функции add
+       
         auto current = row.Get(i);
         auto add  = ops[i].AsCell();
         TCell value;
@@ -327,28 +303,6 @@ void TDataShardUserDb::IncrementRowInt( // вызывать upsert
     }
 
     UpsertRowInt(rowOp, tableId, localTableId, key, newOps);
-    // const ui64 writeTxId = GetWriteTxId(tableId);
-    // if (writeTxId == 0) {
-    //     if (collector && !collector->OnUpdate(tableId, localTableId, rowOp, key, newOps, WriteVersion))
-    //         throw TNotReadyTabletException();
-
-    //     Db.Update(localTableId, rowOp, key, newOps, WriteVersion);
-    // } else {
-    //     if (collector && !collector->OnUpdateTx(tableId, localTableId, rowOp, key, newOps, writeTxId))
-    //         throw TNotReadyTabletException();
-
-    //     Db.UpdateTx(localTableId, rowOp, key, newOps, writeTxId);
-    // }
-
-    // if (VolatileTxId) {
-    //     Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, VolatileTxId, Db);
-    // } else if (LockTxId) {
-    //     Self.GetConflictsCache().GetTableCache(localTableId).AddUncommittedWrite(keyCells, LockTxId, Db);
-    // } else {
-    //     Self.GetConflictsCache().GetTableCache(localTableId).RemoveUncommittedWrites(keyCells, Db);
-    // }
-
-    // Self.GetKeyAccessSampler()->AddSample(tableId, keyCells);
 }
 
 bool TDataShardUserDb::RowExists (
@@ -385,7 +339,8 @@ NTable::TRowState TDataShardUserDb::RowData ( // todo переимменоват
             return std::move(rowState);
         }
         case NTable::EReady::Gone: {
-            throw TNotReadyTabletException(); // спросить у никиты  TUniqueConstrainException();
+            return rowState; // размер 0  - игнорируем
+            //throw TUniqueConstrainException(); // спросить у никиты  TUniqueConstrainException();
         }
     }
 }
