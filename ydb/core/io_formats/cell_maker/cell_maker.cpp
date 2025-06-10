@@ -351,6 +351,53 @@ bool AddTwoCell(const TCell& cell1, const TCell& cell2, TCell& result, const NSc
     }
 }
 
+u_int64_t AddTwoCell64(const TCell& cell1, const TCell& cell2, const NScheme::TTypeId& typeId, TString& err) {
+
+    if(cell1.Size() != cell2.Size()) {
+        err = "not equal types";
+        return 0;
+    }
+    if(cell1.Size() != NScheme::GetFixedSize(typeId)) {
+        err = "not appropriate type";
+        return 0;
+    }
+
+    err = "";
+    switch (typeId) {
+    case NScheme::NTypeIds::Int8:
+        return cell1.AsValue<i8>() + cell2.AsValue<i8>();
+       
+    case NScheme::NTypeIds::Uint8:
+        return cell1.AsValue<ui8>() + cell2.AsValue<ui8>();
+       
+    case NScheme::NTypeIds::Int16:
+        return cell1.AsValue<i16>() + cell2.AsValue<i16>();
+        
+    case NScheme::NTypeIds::Uint16:
+        return cell1.AsValue<ui16>() + cell2.AsValue<ui16>();
+        
+    case NScheme::NTypeIds::Int32:
+        return cell1.AsValue<i32>() + cell2.AsValue<i32>();
+        
+    case NScheme::NTypeIds::Uint32:
+        return cell1.AsValue<ui32>() + cell2.AsValue<ui32>();
+    
+    case NScheme::NTypeIds::Int64:
+        return cell1.AsValue<i64>() + cell2.AsValue<i64>();
+       
+    case NScheme::NTypeIds::Uint64:
+        return cell1.AsValue<ui64>() + cell2.AsValue<ui64>();
+       
+    case NScheme::NTypeIds::Float:
+        return cell1.AsValue<float>() + cell2.AsValue<float>();
+        
+    case NScheme::NTypeIds::Double:
+        return cell1.AsValue<double>() + cell2.AsValue<double>();
+    
+    }
+    return 0;
+}
+
 bool MakeCell(TCell& cell, TStringBuf value, const NScheme::TTypeInfo& typeInfo, TMemoryPool& pool, TString& err) {
     if (value == "null") {
         return true;

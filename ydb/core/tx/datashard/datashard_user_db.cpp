@@ -168,7 +168,7 @@ void TDataShardUserDb::UpdateRow(
 void TDataShardUserDb::IncrementRow(
     const TTableId& tableId,
     const TArrayRef<const TRawTypeValue> key,
-    const TArrayRef<const NIceDb::TUpdateOp> ops) // !! TIncrementOp 
+    const TArrayRef<const NIceDb::TUpdateOp> ops)
 {
     auto localTableId = Self.GetLocalTableId(tableId);
     Y_ENSURE(localTableId != 0, "Unexpected incrementRow for an unknown table");
@@ -178,10 +178,10 @@ void TDataShardUserDb::IncrementRow(
     TVector<NTable::TTag> columns;
     for(auto op : ops)
         columns.push_back(op.Tag);        
-    currentRow = RowData(tableId, key, columns);
+    currentRow = GetRowState(tableId, key, columns);
 
     if(currentRow.Size() == 0)
-        return; // или исключение - мы не можем инкременить строку
+        return;
     
     IncrementRowInt(NTable::ERowOp::Upsert, tableId, localTableId, key, ops, currentRow);
 
@@ -288,18 +288,19 @@ void TDataShardUserDb::IncrementRowInt(
        
         auto current = row.Get(i);
         auto add  = ops[i].AsCell();
-        TCell value;
+        TCell value(ops[i].AsRef());
+        
         TString message;
-        auto success = NFormats::AddTwoCell(current, add, value, vtype, message); //  message
+        auto success = NFormats::AddTwoCell(current, add, value, vtype, message);
+        
         if(! success)
-            return; // ?? todo
-        //
-
-        const char* ptr = static_cast<const char*>(static_cast<const void*>(&value));
-        TRawTypeValue rawTypeValue(ptr, sizeof(value.Size()), vtype); // sizeof!
-           
-        newOps.push_back(ops[i]);
-        newOps[i].Value = rawTypeValue;
+            return; // todo
+        
+        //value.CopyDataInto(ops[i].Value.AsRef()); todo for proper several columns
+    
+        TRawTypeValue rawTypeValue(value.Data(), NKikimr::NScheme::GetFixedSize(vtype), vtype);
+        NIceDb::TUpdateOp extOp(ops[i].Tag, ops[i].Op, rawTypeValue);
+        newOps.emplace_back(extOp);
     }
 
     UpsertRowInt(rowOp, tableId, localTableId, key, newOps);
@@ -323,7 +324,7 @@ bool TDataShardUserDb::RowExists (
         }
     }
 }
-NTable::TRowState TDataShardUserDb::RowData ( // todo переимменовать
+NTable::TRowState TDataShardUserDb::GetRowState (
     const TTableId& tableId,
     const TArrayRef<const TRawTypeValue> key,
     TVector<NTable::TTag> columns) 
@@ -340,7 +341,6 @@ NTable::TRowState TDataShardUserDb::RowData ( // todo переимменоват
         }
         case NTable::EReady::Gone: {
             return rowState; // размер 0  - игнорируем
-            //throw TUniqueConstrainException(); // спросить у никиты  TUniqueConstrainException();
         }
     }
 }

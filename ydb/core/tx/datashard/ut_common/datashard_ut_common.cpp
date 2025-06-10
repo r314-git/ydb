@@ -2182,6 +2182,9 @@ std::unique_ptr<NEvents::TDataEvents::TEvWrite> MakeWriteRequest(std::optional<u
 }
 
 std::unique_ptr<NEvents::TDataEvents::TEvWrite> MakeWriteRequest(std::optional<ui64> txId, NKikimrDataEvents::TEvWrite::ETxMode txMode, NKikimrDataEvents::TEvWrite_TOperation::EOperationType operationType, const TTableId& tableId, const std::vector<ui32>& columnIds, const std::vector<TCell>& cells) {
+    auto x = cells.size();
+    auto y = columnIds.size();
+    std::cerr << x << " " << y << std::endl;
     UNIT_ASSERT((cells.size() % columnIds.size()) == 0);
 
     TSerializedCellMatrix matrix(cells, cells.size() / columnIds.size(), columnIds.size());
