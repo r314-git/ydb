@@ -2129,16 +2129,8 @@ void AddValueToCells(ui64 value, const TString& columnType, TVector<TCell>& cell
     } else if (columnType == "Int8") {
         i8 value8 = static_cast<i8>(value);
         cells.push_back(TCell::Make(value8));
-    } else if (columnType == "Double") { // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    } else if (columnType == "Double") {
         cells.emplace_back(TCell((const char*)&value, sizeof(double)));
-    } else if (columnType == "Uint64") { // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        cells.emplace_back(TCell((const char*)&value, sizeof(ui64)));
-    } else if (columnType == "Uint32") {
-        ui32 value32 = (ui32)value;
-        cells.emplace_back(TCell((const char*)&value32, sizeof(ui32)));
-    } else if (columnType == "Int32") {
-        i32 value32 = (i32)value;
-        cells.push_back(TCell::Make(value32));
     } else if (columnType == "Utf8") {
         stringValues.emplace_back(Sprintf("String_%" PRIu64, value));
         cells.emplace_back(TCell(stringValues.back().c_str(), stringValues.back().size()));
@@ -2182,9 +2174,6 @@ std::unique_ptr<NEvents::TDataEvents::TEvWrite> MakeWriteRequest(std::optional<u
 }
 
 std::unique_ptr<NEvents::TDataEvents::TEvWrite> MakeWriteRequest(std::optional<ui64> txId, NKikimrDataEvents::TEvWrite::ETxMode txMode, NKikimrDataEvents::TEvWrite_TOperation::EOperationType operationType, const TTableId& tableId, const std::vector<ui32>& columnIds, const std::vector<TCell>& cells) {
-    auto x = cells.size();
-    auto y = columnIds.size();
-    std::cerr << x << " " << y << std::endl;
     UNIT_ASSERT((cells.size() % columnIds.size()) == 0);
 
     TSerializedCellMatrix matrix(cells, cells.size() / columnIds.size(), columnIds.size());
