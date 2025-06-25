@@ -69,6 +69,50 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         }
     }
 
+    Y_UNIT_TEST_TWIN(ExecSQLBIIIG, EvWrite) {
+        NKikimrConfig::TAppConfig app;
+        app.MutableTableServiceConfig()->SetEnableOltpSink(EvWrite);
+        TPortManager pm;
+        TServerSettings serverSettings(pm.GetPort(2134));
+        serverSettings
+            .SetDomainName("Root")
+            .SetUseRealThreads(false)
+            .SetAppConfig(app);
+
+        auto [runtime, server, sender] = TestCreateServer(serverSettings);
+
+        auto opts = TShardedTableOptions()
+            .Columns({
+                {"key", "Uint64", true, false},           // key (id=1)
+                {"val1", "Utf8", false, false},
+                {"val2", "Utf8", false, false}
+            }).Indexes({2, 3}); // ???
+
+
+        auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
+        const ui64 shard = shards[0];
+        ui64 txId = 100;
+        
+ 
+        Cout << "========= Insert initial data =========\n";
+        {
+            TVector<ui32> columnIds = {1, 2, 3, 4, 5, 6, 7,8,9,10,11}; // all columns
+            TVector<TCell> cells = {
+                TCell::Make(ui64(1)),     // key = 1
+                TCell::Make("abra")
+            };
+
+            auto result = Upsert(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, columnIds, cells);
+
+            UNIT_ASSERT_VALUES_EQUAL(result.GetStatus(), NKikimrDataEvents::TEvWriteResult::STATUS_COMPLETED);          
+        }
+    
+        Cout << "========= Verify initial data =========\n";
+        {
+            auto tableState = ReadTable(server, shards, tableId);
+        }
+    }
+
     Y_UNIT_TEST(IncrementImmediate) {
         
         auto [runtime, server, sender] = TestCreateServer();
