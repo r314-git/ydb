@@ -69,24 +69,18 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         }
     }
 
-    Y_UNIT_TEST_TWIN(ExecSQLBIIIG, EvWrite) {
-        NKikimrConfig::TAppConfig app;
-        app.MutableTableServiceConfig()->SetEnableOltpSink(EvWrite);
-        TPortManager pm;
-        TServerSettings serverSettings(pm.GetPort(2134));
-        serverSettings
-            .SetDomainName("Root")
-            .SetUseRealThreads(false)
-            .SetAppConfig(app);
+    Y_UNIT_TEST(ExecSQLBIG) {
 
-        auto [runtime, server, sender] = TestCreateServer(serverSettings);
+        auto [runtime, server, sender] = TestCreateServer();
 
         auto opts = TShardedTableOptions()
             .Columns({
-                {"key", "Uint64", true, false},           // key (id=1)
-                {"val1", "Utf8", false, false},
-                {"val2", "Utf8", false, false}
-            }).Indexes({2, 3}); // ???
+                {"key", "String", true, false},           // key (id=1)
+                {"val1", "String", false, false},
+                {"val2", "String", false, false}
+            }).Indexes({{"by_val1", {"val1"}, {}, NKikimrSchemeOp::EIndexTypeGlobalAsync}});
+            
+            //Indexes({2, 3}); // ???
 
 
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
@@ -94,22 +88,31 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         ui64 txId = 100;
         
  
+        //auto s = TString((1 << 3) + 5,  'a');
+        auto s = "abcdefghijklmnopqrstq" + TString((1 << 3) + 5,  'a');
+        
+        auto bigCell = TCell::Make(s);
         Cout << "========= Insert initial data =========\n";
         {
-            TVector<ui32> columnIds = {1, 2, 3, 4, 5, 6, 7,8,9,10,11}; // all columns
+            TVector<ui32> columnIds = {1, 2};
             TVector<TCell> cells = {
-                TCell::Make(ui64(1)),     // key = 1
-                TCell::Make("abra")
+                TCell::Make(s),
+                bigCell
             };
 
             auto result = Upsert(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, columnIds, cells);
 
             UNIT_ASSERT_VALUES_EQUAL(result.GetStatus(), NKikimrDataEvents::TEvWriteResult::STATUS_COMPLETED);          
         }
-    
+        //auto convert = NPg::PgNativeTextFromNativeBinary(bigCell.AsBuf(), NScheme::NTypeIds::String);
+        auto bufOfAaaaaaString = EscapeC(bigCell.Data(), bigCell.Size());
+          
+        auto expectedState = "key = " + bufOfAaaaaaString + ", val1 = " + bufOfAaaaaaString + ", val2 = NULL\n";
+
         Cout << "========= Verify initial data =========\n";
         {
             auto tableState = ReadTable(server, shards, tableId);
+            UNIT_ASSERT_STRINGS_EQUAL(tableState, expectedState);
         }
     }
 

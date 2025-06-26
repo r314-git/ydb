@@ -158,6 +158,14 @@ std::tuple<NKikimrTxDataShard::TError::EKind, TString> TValidatedWriteTxOperatio
                 return {NKikimrTxDataShard::TError::BAD_ARGUMENT, TStringBuilder() << "Row cell size of " << cell.Size() << " bytes is larger than the allowed threshold " << NLimits::MaxWriteValueSize};
         }
     }
+    if( Matrix.GetCell(0, 0).Size() > 5)
+    {
+        std :: cerr << Matrix.GetCell(0, 0).Size() << std::endl;
+        std :: cerr << "size of cell " << Matrix.GetCell(0, 0).AsValue<TString>()<< std::endl;
+        std :: cerr << "size of object = " << Matrix.GetCell(0, 0).AsValue<TString>().size() << std::endl;
+        
+        
+    }
 
     if (OperationType == NKikimrDataEvents::TEvWrite::TOperation::OPERATION_INCREMENT) {
         for (size_t i = tableInfo.KeyColumnIds.size(); i < ColumnIds.size(); i++) { // only data columns
