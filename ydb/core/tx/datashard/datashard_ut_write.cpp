@@ -86,28 +86,34 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
         const ui64 shard = shards[0];
         ui64 txId = 100;
+
+        auto s1 = TString((1 << 23) + 5,  'a');
+        auto s2 = TString((1 << 23) + 5,  'a');
+        auto s3 = TString((1 << 23) + 5,  'a');
         
- 
-        //auto s = TString((1 << 3) + 5,  'a');
-        auto s = "abcdefghijklmnopqrstq" + TString((1 << 3) + 5,  'a');
         
-        auto bigCell = TCell::Make(s);
+        auto bigCell1 = TCell::Make(s1);
+        auto bigCell2 = TCell::Make(s2);
+
         Cout << "========= Insert initial data =========\n";
         {
             TVector<ui32> columnIds = {1, 2};
             TVector<TCell> cells = {
-                TCell::Make(s),
-                bigCell
+                TCell(s1.c_str(), s1.size()), // тест валится по threshold 1049600
+                //bigCell1, // тест проходит
+                bigCell2
             };
 
             auto result = Upsert(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, columnIds, cells);
 
             UNIT_ASSERT_VALUES_EQUAL(result.GetStatus(), NKikimrDataEvents::TEvWriteResult::STATUS_COMPLETED);          
         }
-        //auto convert = NPg::PgNativeTextFromNativeBinary(bigCell.AsBuf(), NScheme::NTypeIds::String);
-        auto bufOfAaaaaaString = EscapeC(bigCell.Data(), bigCell.Size());
+        
+        auto bufOfAaaaaaString1 = EscapeC(bigCell1.Data(), bigCell1.Size());
+        auto bufOfAaaaaaString2 = EscapeC(bigCell2.Data(), bigCell2.Size());
+        
           
-        auto expectedState = "key = " + bufOfAaaaaaString + ", val1 = " + bufOfAaaaaaString + ", val2 = NULL\n";
+        auto expectedState = "key = " + bufOfAaaaaaString1 + ", val1 = " + bufOfAaaaaaString2 + ", val2 = NULL\n";
 
         Cout << "========= Verify initial data =========\n";
         {
