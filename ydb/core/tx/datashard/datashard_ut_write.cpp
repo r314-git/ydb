@@ -91,7 +91,8 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         auto s2 = TString((1 << 23) + 5,  'a');
         auto s3 = TString((1 << 23) + 5,  'a');
         
-        
+        auto testInterruptor = TCell(s1.c_str(), s1.size());
+
         auto bigCell1 = TCell::Make(s1);
         auto bigCell2 = TCell::Make(s2);
 
