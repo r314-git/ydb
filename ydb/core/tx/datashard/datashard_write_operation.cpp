@@ -140,7 +140,7 @@ std::tuple<NKikimrTxDataShard::TError::EKind, TString> TValidatedWriteTxOperatio
         if (!col)
             return {NKikimrTxDataShard::TError::SCHEME_ERROR, TStringBuilder() << "Missing column with id " << columnTag};
     }
-
+    
     for (ui32 rowIdx = 0; rowIdx < Matrix.GetRowCount(); ++rowIdx)
     {
         ui64 keyBytes = 0;

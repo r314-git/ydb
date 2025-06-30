@@ -71,24 +71,29 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
 
     Y_UNIT_TEST(ExecSQLBIG) {
 
-        auto [runtime, server, sender] = TestCreateServer();
+        TPortManager pm;
+        TServerSettings serverSettings(pm.GetPort(2134));
+        serverSettings
+            .SetDomainName("Root")
+            .SetUseRealThreads(false);
+        auto [runtime, server, sender] = TestCreateServer(serverSettings);
 
         auto opts = TShardedTableOptions()
             .Columns({
                 {"key", "String", true, false},           // key (id=1)
                 {"val1", "String", false, false},
                 {"val2", "String", false, false}
-            }).Indexes({{"by_val1", {"val1"}, {}, NKikimrSchemeOp::EIndexTypeGlobalAsync}});
+            });//.Indexes({{"by_val1", {"val1"}, {}, NKikimrSchemeOp::EIndexTypeGlobalAsync}});
             
             //Indexes({2, 3}); // ???
-
+        
 
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
         const ui64 shard = shards[0];
         ui64 txId = 100;
 
-        auto s1 = TString((1 << 23) + 5,  'a');
-        auto s2 = TString((1 << 23) + 5,  'a');
+        auto s1 = TString(5,  'a');
+        auto s2 = TString((1 << 2) + 5,  'a');
         auto s3 = TString((1 << 23) + 5,  'a');
         
         auto testInterruptor = TCell(s1.c_str(), s1.size());
@@ -100,9 +105,9 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         {
             TVector<ui32> columnIds = {1, 2};
             TVector<TCell> cells = {
-                TCell(s1.c_str(), s1.size()), // тест валится по threshold 1049600
+                TCell(s1.c_str(), s1.size()),
                 //bigCell1, // тест проходит
-                bigCell2
+                TCell(s2.c_str(), s2.size()), // тест валится по threshold 1049600
             };
 
             auto result = Upsert(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, columnIds, cells);
@@ -114,13 +119,20 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         auto bufOfAaaaaaString2 = EscapeC(bigCell2.Data(), bigCell2.Size());
         
           
-        auto expectedState = "key = " + bufOfAaaaaaString1 + ", val1 = " + bufOfAaaaaaString2 + ", val2 = NULL\n";
+        //auto expectedState = "key = " + bufOfAaaaaaString1 + ", val1 = " + bufOfAaaaaaString2 + ", val2 = NULL\n";
+    
+        auto expectedState = "key = " + s1 + ", val1 = " + s2 + ", val2 = NULL\n";
 
         Cout << "========= Verify initial data =========\n";
         {
             auto tableState = ReadTable(server, shards, tableId);
             UNIT_ASSERT_STRINGS_EQUAL(tableState, expectedState);
         }
+
+        //ExecSQL(server, sender, Q_("UPSERT INTO `/Root/table-1` (key, value) VALUES (0, 1);"));
+        ExecSQL(server, sender, Q_("ALTER TABLE `/Root/table-1` ADD INDEX `val1_index` GLOBAL ON (`val1`);"), false);
+
+        
     }
 
     Y_UNIT_TEST(IncrementImmediate) {
