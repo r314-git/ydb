@@ -75,7 +75,10 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         TServerSettings serverSettings(pm.GetPort(2134));
         serverSettings
             .SetDomainName("Root")
-            .SetUseRealThreads(false);
+            .SetUseRealThreads(false)
+            .SetEnableDataColumnForIndexTable(true)
+            .SetEnableUuidAsPrimaryKey(true);
+        //
         auto [runtime, server, sender] = TestCreateServer(serverSettings);
 
         auto opts = TShardedTableOptions()
@@ -87,6 +90,7 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
             
             //Indexes({2, 3}); // ???
         
+        runtime.GetAppData().FeatureFlags.SetEnableDataShardVolatileTransactions(true);
 
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
         const ui64 shard = shards[0];
@@ -94,7 +98,7 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
 
         auto s1 = TString(5,  'a');
         auto s2 = TString((1 << 2) + 5,  'a');
-        auto s3 = TString((1 << 23) + 5,  'a');
+       //auto s3 = TString((1 << 23) + 5,  'a');
         
         auto testInterruptor = TCell(s1.c_str(), s1.size());
 
@@ -130,8 +134,14 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         }
 
         //ExecSQL(server, sender, Q_("UPSERT INTO `/Root/table-1` (key, value) VALUES (0, 1);"));
-        ExecSQL(server, sender, Q_("ALTER TABLE `/Root/table-1` ADD INDEX `val1_index` GLOBAL ON (`val1`);"), false);
+        //ExecSQL(server, sender, Q_("ALTER TABLE `/Root/table-1` ADD INDEX `val1_index` GLOBAL ON (`val1`);"), false);
 
+        Cout << "========= Send distributed write =========\n";
+            {
+                ExecSQL(server, sender, Q_(
+                    "UPSERT INTO `/Root/table-1` (key, va1) VALUES ('12', 'abc');"));
+            }
+            
         
     }
 
