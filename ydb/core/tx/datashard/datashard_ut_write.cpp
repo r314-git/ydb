@@ -87,17 +87,17 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
                 {"val1", "String", false, false},
                 {"val2", "String", false, false}
             });//.Indexes({{"by_val1", {"val1"}, {}, NKikimrSchemeOp::EIndexTypeGlobalAsync}});
-            
+        //opts.Indexes({{"by_val1", {"val1"}, {}, NKikimrSchemeOp::EIndexTypeGlobalUnique}});
             //Indexes({2, 3}); // ???
         
-        runtime.GetAppData().FeatureFlags.SetEnableDataShardVolatileTransactions(true);
+        //runtime.GetAppData().FeatureFlags.SetEnableDataShardVolatileTransactions(true);
 
         auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", opts);
         const ui64 shard = shards[0];
         ui64 txId = 100;
 
         auto s1 = TString(5,  'a');
-        auto s2 = TString((1 << 2) + 5,  'a');
+        auto s2 = TString((1 << 25) + 5,  'a');
        //auto s3 = TString((1 << 23) + 5,  'a');
         
         auto testInterruptor = TCell(s1.c_str(), s1.size());
@@ -105,7 +105,31 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         auto bigCell1 = TCell::Make(s1);
         auto bigCell2 = TCell::Make(s2);
 
-        Cout << "========= Insert initial data =========\n";
+
+        Cout << "========= Insert initial data unique error =========\n";
+        {
+            TVector<ui32> columnIds = {1, 2};
+            TVector<TCell> cells = {
+                TCell("sad"),
+                TCell("qwe"), 
+                TCell("asd"),
+                TCell("qwe") // повтор
+            };
+
+            auto result = Upsert(runtime, sender, shard, tableId, txId, NKikimrDataEvents::TEvWrite::MODE_IMMEDIATE, columnIds, cells);
+
+            UNIT_ASSERT_VALUES_EQUAL(result.GetStatus(), NKikimrDataEvents::TEvWriteResult::STATUS_COMPLETED);          
+        }
+        
+
+        Cout << "========= Verify initial data =========\n";
+        {
+            auto expectedState = "key = asd\\0, val1 = qwe\\0, val2 = NULL\nkey = sad\\0, val1 = qwe\\0, val2 = NULL\n";
+            auto tableState = ReadTable(server, shards, tableId);
+            UNIT_ASSERT_STRINGS_EQUAL(tableState, expectedState);
+        }
+
+        Cout << "========= Insert initial data treshold error =========\n";
         {
             TVector<ui32> columnIds = {1, 2};
             TVector<TCell> cells = {
@@ -136,11 +160,11 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         //ExecSQL(server, sender, Q_("UPSERT INTO `/Root/table-1` (key, value) VALUES (0, 1);"));
         //ExecSQL(server, sender, Q_("ALTER TABLE `/Root/table-1` ADD INDEX `val1_index` GLOBAL ON (`val1`);"), false);
 
-        Cout << "========= Send distributed write =========\n";
-            {
-                ExecSQL(server, sender, Q_(
-                    "UPSERT INTO `/Root/table-1` (key, va1) VALUES ('12', 'abc');"));
-            }
+        // Cout << "========= Send distributed write =========\n";
+        //     {
+        //         ExecSQL(server, sender, Q_(
+        //             "UPSERT INTO `/Root/table-1` (key, va1) VALUES ('12', 'abc');"));
+        //     }
             
         
     }
