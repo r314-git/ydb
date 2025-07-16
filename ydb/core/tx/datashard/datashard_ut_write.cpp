@@ -189,6 +189,178 @@ Y_UNIT_TEST_SUITE(DataShardWrite) {
         }
     }
 
+    void TestLateKqpQueryAfterColumnDrop(bool dataQuery, const TString& query) {
+        TPortManager pm;
+        NKikimrConfig::TAppConfig app;
+        app.MutableTableServiceConfig()->SetEnableKqpScanQuerySourceRead(false);
+        app.MutableTableServiceConfig()->SetEnableOltpSink(true); // true or false
+        TServerSettings serverSettings(pm.GetPort(2134));
+        serverSettings.SetDomainName("Root")
+            .SetUseRealThreads(false)
+            .SetAppConfig(app);
+    
+        Tests::TServer::TPtr server = new TServer(serverSettings);
+        auto &runtime = *server->GetRuntime();
+        auto sender = runtime.AllocateEdgeActor();
+        auto streamSender = runtime.AllocateEdgeActor();
+    
+        runtime.SetLogPriority(NKikimrServices::TX_DATASHARD, NLog::PRI_TRACE);
+        runtime.SetLogPriority(NKikimrServices::TX_PROXY, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_PROXY, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_WORKER, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_TASKS_RUNNER, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_YQL, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_EXECUTER, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_COMPUTE, NLog::PRI_DEBUG);
+        runtime.SetLogPriority(NKikimrServices::KQP_RESOURCE_MANAGER, NLog::PRI_DEBUG);
+    
+        InitRoot(server, sender);
+    
+        CreateShardedTable(server, sender, "/Root", "table-1", TShardedTableOptions()
+                .Columns({
+                    {"key", "Uint32", true, false},
+                    {"value1", "Uint32", false, false},
+                    {"value2", "Uint32", false, false}}));
+    
+        ExecSQL(server, sender, "UPSERT INTO `/Root/table-1` (key, value1, value2) VALUES (1, 1, 10), (2, 2, 20);");
+    
+        bool capturePropose = true;
+        TVector<THolder<IEventHandle>> eventsPropose;
+        auto captureEvents = [&](TAutoPtr<IEventHandle> &ev) -> auto {
+            // if (ev->GetRecipientRewrite() == streamSender) {
+            //     Cerr << "Stream sender got " << ev->GetTypeRewrite() << " " << ev->GetBase()->ToStringHeader() << Endl;
+            // }
+            switch (ev->GetTypeRewrite()) {
+                case TEvDataShard::EvProposeTransaction: {
+                    auto &rec = ev->Get<TEvDataShard::TEvProposeTransaction>()->Record;
+                    if (capturePropose && rec.GetTxKind() != NKikimrTxDataShard::TX_KIND_SNAPSHOT) {
+                        Cerr << "---- capture EvProposeTransaction ---- type=" << rec.GetTxKind() << Endl;
+                        eventsPropose.emplace_back(ev.Release());
+                        return TTestActorRuntime::EEventAction::DROP;
+                    }
+                    break;
+                }
+    
+                case NKikimr::NEvents::TDataEvents::EvWrite: {
+                    if (capturePropose) {
+                        Cerr << "---- capture EvWrite ----" << Endl;
+                        eventsPropose.emplace_back(ev.Release());
+                        return TTestActorRuntime::EEventAction::DROP;
+                    }
+                    break;
+                }
+    
+                case TEvDataShard::EvKqpScan: {
+                    if (capturePropose) {
+                        Cerr << "---- capture EvKqpScan ----" << Endl;
+                        eventsPropose.emplace_back(ev.Release());
+                        return TTestActorRuntime::EEventAction::DROP;
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            return TTestActorRuntime::EEventAction::PROCESS;
+        };
+        auto prevObserverFunc = runtime.SetObserverFunc(captureEvents);
+    
+        std::function<void()> processEvents = [&]() {
+            // Wait until there's exactly one propose message at our datashard
+            if (eventsPropose.size() < 1) {
+                TDispatchOptions options;
+                options.CustomFinalCondition = [&]() {
+                    return eventsPropose.size() >= 1;
+                };
+                runtime.DispatchEvents(options);
+            }
+            UNIT_ASSERT_VALUES_EQUAL(eventsPropose.size(), 1u);
+            Cerr << "--- captured scan tx proposal" << Endl;
+            capturePropose = false;
+    
+            // Drop column value2 and wait for drop to finish
+            auto dropTxId = AsyncAlterDropColumn(server, "/Root", "table-1", "value2");
+            WaitTxNotification(server, dropTxId);
+    
+            // Resend delayed propose messages
+            Cerr << "--- resending captured proposals" << Endl;
+            for (auto& ev : eventsPropose) {
+                runtime.Send(ev.Release(), 0, true);
+            }
+            eventsPropose.clear();
+            return;
+        };
+    
+        if (dataQuery) {
+            Cerr << "--- sending data query request" << Endl;
+            auto tmp = CreateSessionRPC(runtime);
+            auto f = SendRequest(runtime, MakeSimpleRequestRPC(query, tmp, "", true));
+            processEvents();
+            auto response = AwaitResponse(runtime, f);
+            UNIT_ASSERT_VALUES_EQUAL(response.operation().status(), Ydb::StatusIds::ABORTED);
+        } else {
+            Cerr << "--- sending stream request" << Endl;
+            SendRequest(runtime, streamSender, MakeStreamRequest(streamSender, query, false));
+            processEvents();
+    
+            Cerr << "--- waiting for result" << Endl;
+            auto ev = runtime.GrabEdgeEventRethrow<NKqp::TEvKqp::TEvQueryResponse>(streamSender);
+            auto& response = ev->Get()->Record;
+            Cerr << response.DebugString() << Endl;
+            UNIT_ASSERT_VALUES_EQUAL(response.GetYdbStatus(), Ydb::StatusIds::ABORTED);
+            auto& issue = response.GetResponse().GetQueryIssues(0);
+            UNIT_ASSERT_VALUES_EQUAL(issue.issue_code(), (int) NYql::TIssuesIds::KIKIMR_SCHEME_MISMATCH);
+            UNIT_ASSERT_STRINGS_EQUAL(issue.message(), "Table \'/Root/table-1\' scheme changed.");
+        }
+    }
+    
+    Y_UNIT_TEST(TestLateKqpScanAfterColumnDrop) {
+        //TestLateKqpQueryAfterColumnDrop(false, "SELECT SUM(value2) FROM `/Root/table-1`");
+        TPortManager pm;
+        NKikimrConfig::TAppConfig app;
+        app.MutableTableServiceConfig()->SetEnableKqpScanQuerySourceRead(false);
+        app.MutableTableServiceConfig()->SetEnableOltpSink(false); // true or false
+        TServerSettings serverSettings(pm.GetPort(2134));
+        serverSettings.SetDomainName("Root")
+            .SetUseRealThreads(false)
+            .SetAppConfig(app);
+    
+        Tests::TServer::TPtr server = new TServer(serverSettings);
+        auto &runtime = *server->GetRuntime();
+        auto sender = runtime.AllocateEdgeActor();
+        
+        InitRoot(server, sender);
+        
+        auto [shards, tableId] = CreateShardedTable(server, sender, "/Root", "table-1", TShardedTableOptions()
+            .Columns({
+                {"key", "Uint32", true, false},
+                {"value1", "Uint32", false, false},
+                {"value2", "Uint32", false, false}}));
+
+        ExecSQL(server, sender, "UPSERT INTO `/Root/table-1` (key, value1, value2) VALUES (1, 1, 10), (2, 2, 20);");
+    
+        
+        Cout << "========= Verify data =========\n";
+        {
+            auto tableState = ReadTable(server, shards, tableId);
+            UNIT_ASSERT_STRINGS_EQUAL(tableState, 
+                "key = 1, value1 = 1, value2 = 10\nkey = 2, value1 = 2, value2 = 20\n");
+        }
+        
+        auto dropTxId = AsyncAlterDropColumn(server, "/Root", "table-1", "value2");
+            WaitTxNotification(server, dropTxId);
+
+        // experiments
+        ExecSQL(server, sender, "UPSERT INTO `/Root/table-1` (key, value1) VALUES (1, 5), (2, 5);");
+        
+        Cout << "========= Verify data changed after drop column =========\n";
+        {
+            auto tableState = ReadTable(server, shards, tableId);
+            UNIT_ASSERT_STRINGS_EQUAL(tableState, 
+                "key = 1, value1 = 1\nkey = 2, value1 = 2\n");
+        }
+    }
+
     Y_UNIT_TEST(IncrementImmediate) {
         
         auto [runtime, server, sender] = TestCreateServer();
