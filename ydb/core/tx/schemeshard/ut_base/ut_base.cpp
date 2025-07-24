@@ -6800,6 +6800,68 @@ Y_UNIT_TEST_SUITE(TSchemeShardTest) {
         );
     }
 
+    Y_UNIT_TEST(TruncateTable) {
+        TTestBasicRuntime runtime;
+        TTestEnv env(runtime);
+        ui64 txId = 1000;
+
+        TString tcfg1 = "Name: \"Table\""
+            "Columns { Name: \"RowId\"      Type: \"Uint64\"}"
+            "Columns { Name: \"Value\"      Type: \"Utf8\"}"
+            "KeyColumnNames: [\"RowId\"]";
+
+        TString tcfg2 = "Name: \"PartTable\""
+                    "Columns { Name: \"key1\"       Type: \"Uint32\"}"
+                    "Columns { Name: \"key2\"       Type: \"Utf8\"}"
+                    "Columns { Name: \"key3\"       Type: \"Uint64\"}"
+                    "Columns { Name: \"value\"      Type: \"Utf8\"}"
+                    "KeyColumnNames: [\"key1\", \"key2\", \"key3\"]"
+                    "UniformPartitionsCount: 10";
+
+        TestMkDir(runtime, ++txId, "/MyRoot", "Ops");
+
+        TestTruncateTable(runtime, ++txId, "/MyRoot/Ops", "Table", {NKikimrScheme::StatusPathDoesNotExist});
+
+        Cdbg << "Create, Drop (simple table)" << Endl;
+        TestTruncateTable(runtime, ++txId, "/MyRoot/Ops", tcfg1);
+        env.TestWaitNotification(runtime, txId);
+
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops/Table", true),
+                           {NLs::Finished});
+
+        TestRmDir(runtime, ++txId, "/MyRoot", "Ops", {NKikimrScheme::StatusNameConflict});
+
+        TestDropTable(runtime, ++txId, "/MyRoot/Ops", "Table");
+        env.TestWaitNotification(runtime, txId);
+
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops/Table"),
+                           {NLs::PathNotExist});
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops"),
+                           {NLs::NoChildren});
+
+        env.TestWaitTabletDeletion(runtime, TTestTxConfig::FakeHiveTablets);
+
+
+        Cdbg << "Create, Drop (partitioned table)" << Endl;
+        TestCreateTable(runtime, ++txId, "/MyRoot/Ops", tcfg2);
+        env.TestWaitNotification(runtime, txId);
+
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops/PartTable", true),
+                           {NLs::Finished});
+
+        TestRmDir(runtime, ++txId, "/MyRoot", "Ops", {NKikimrScheme::StatusNameConflict});
+
+        TestDropTable(runtime, ++txId, "/MyRoot/Ops", "PartTable");
+        env.TestWaitNotification(runtime, txId);
+
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops/Table"),
+                           {NLs::PathNotExist});
+        TestDescribeResult(DescribePath(runtime, "/MyRoot/Ops"),
+                           {NLs::NoChildren});
+
+        env.TestWaitTabletDeletion(runtime, TTestTxConfig::FakeHiveTablets+1);
+    }
+    
     Y_UNIT_TEST(DropTable) { //+
         TTestBasicRuntime runtime;
         TTestEnv env(runtime);

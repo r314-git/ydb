@@ -1813,6 +1813,8 @@ message TModifyScheme {
 
     optional TChangePathState ChangePathState = 82;
 
+    optional TTableDescription TruncateTable = 84;
+
     // Some entries are grouped by semantics, so are out of order
 }
 

@@ -892,6 +892,7 @@ namespace NSchemeShardUT_Private {
     GENERIC_HELPERS(AlterTable, NKikimrSchemeOp::EOperationType::ESchemeOpAlterTable, &NKikimrSchemeOp::TModifyScheme::MutableAlterTable)
     GENERIC_HELPERS(SplitTable, NKikimrSchemeOp::EOperationType::ESchemeOpSplitMergeTablePartitions, &NKikimrSchemeOp::TModifyScheme::MutableSplitMergeTablePartitions)
     GENERIC_HELPERS(DropTable, NKikimrSchemeOp::EOperationType::ESchemeOpDropTable, &NKikimrSchemeOp::TModifyScheme::MutableDrop)
+    GENERIC_HELPERS(TruncateTable, NKikimrSchemeOp::EOperationType::ESchemeOpTruncateTable, &NKikimrSchemeOp::TModifyScheme::MutableTruncateTable)
     DROP_BY_PATH_ID_HELPERS(DropTable, NKikimrSchemeOp::EOperationType::ESchemeOpDropTable)
     GENERIC_HELPERS(DropTableIndex, NKikimrSchemeOp::EOperationType::ESchemeOpDropIndex, &NKikimrSchemeOp::TModifyScheme::MutableDropIndex)
 

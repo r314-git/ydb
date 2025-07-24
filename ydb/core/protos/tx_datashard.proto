@@ -510,6 +510,8 @@ message TFlatSchemeTransaction {
 
     optional NKikimrSchemeOp.TRestoreIncrementalBackup CreateIncrementalRestoreSrc = 22;
     optional TCreateIncrementalBackupSrc CreateIncrementalBackupSrc = 23;
+
+    optional NKikimrSchemeOp.TTableDescription TruncateTable = 25;
 }
 
 message TDistributedEraseTransaction {
