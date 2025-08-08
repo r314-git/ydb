@@ -145,12 +145,42 @@ bool CanPushTopSort(const TCoTopBase& node, const TKikimrTableDescription& index
 }
 
 bool CanUseVectorIndex(const TIndexDescription& indexDesc, const TExprBase& lambdaBody, const TCoTopBase& top, TString& error) {
+    
+    // auto apply = lambdaBody.Maybe<TCoApply>();
+    // auto args = apply.Cast().Args();
+    // for (size_t i = 0; i < args.Count(); ++i) {
+    //     Cerr << "Arg[" << i << "]: " << TExprBase(args.Get(i)).Ref().Dump() << Endl;
+    // }
     Y_ASSERT(indexDesc.Type == TIndexDescription::EType::GlobalSyncVectorKMeansTree);
     // TODO(mbkkt) We need to account top.Count(), but not clear what to if it's value is runtime?
     const auto& col = indexDesc.KeyColumns.back();
     auto checkMember = [&] (const TExprBase& expr) {
+
+        Cerr << "Arg[" << 00 << "]: " << TExprBase(expr).Ref().Content() << Endl;
+        return true;
         auto member = expr.Maybe<TCoMember>();
-        return member && member.Cast().Name().Value() == col;
+        if(!member)
+        {
+            if(auto apply = expr.Maybe<TCoApply>())
+            {
+                auto ee = apply.Cast();
+                if (auto unwrap = ee.Maybe<TCoUnwrap>()) {
+                    auto e = unwrap.Cast();
+                    member = e.Maybe<TCoMember>();
+                    auto xxx =  member.Cast().Name().Value();
+                    return member && xxx == col; 
+                }
+            }
+            if (auto unwrap = expr.Maybe<TCoUnwrap>()) {
+                auto e = unwrap.Cast();
+                member = e.Maybe<TCoMember>();
+                auto xxx =  member.Cast().Name().Value();
+                return member && xxx == col; 
+            }
+            return false;
+        }
+        auto xxx =  member.Cast().Name().Value();
+        return member && xxx == col;
     };
     auto checkUdf = [&] (const TExprBase& expr, bool checkMembers) {
         auto apply = expr.Maybe<TCoApply>();
@@ -163,6 +193,14 @@ bool CanUseVectorIndex(const TIndexDescription& indexDesc, const TExprBase& lamb
                 return false;
             }
         }
+        //  // Второй аргумент distance-функции
+        //  auto arg2 = args.Get(1);
+        //  // Если второй аргумент — это Unwrap(...), то анализируем его внутренности
+        //  if (auto unwrap = arg2.Maybe<TCoUnwrap>()) {
+        //      arg2 = unwrap.Cast();
+             
+        //  }
+
         auto udf = apply.Cast().Callable().Maybe<TCoUdf>();
         if (!udf) {
             return false;
@@ -171,6 +209,18 @@ bool CanUseVectorIndex(const TIndexDescription& indexDesc, const TExprBase& lamb
         if (!directions) {
             return false;
         }
+        ////////
+        // auto args = apply.Cast().Args();
+        // TExprBase expr2(args.Get(1)); // Второй аргумент
+        // if (auto unwrap = expr2.Maybe<TCoUnwrap>()) {
+        //     expr2 = unwrap.Cast();
+        // }
+        // // Теперь expr2 может быть либо TCoHexDecode, либо что-то другое (на твой случай)
+        // if (!expr2.Maybe<HexDecode>()) {
+        //     error = "Second argument must be String::HexDecode(...) or Unwrap(String::HexDecode(...))";
+        //     return false;
+        // }
+        ////////
         const bool asc = directions.Cast().Literal().Value() == "true";
         const auto methodName = udf.Cast().MethodName().Value();
         auto& desc = std::get<NKikimrKqp::TVectorIndexKmeansTreeDescription>(indexDesc.SpecializedIndexDescription);
@@ -735,6 +785,8 @@ TExprBase KqpRewriteIndexRead(const TExprBase& node, TExprContext& ctx, const TK
         const auto indexName = indexRead.Index().Value();
         auto [implTable, indexDesc] = tableDesc.Metadata->GetIndex(indexName);
         // TODO(mbkkt) instead of ensure should be warning and main table read?
+        TIndexDescription::EType xxx = indexDesc->Type ;
+        std::cout << static_cast<int>(xxx);
         YQL_ENSURE(indexDesc->Type != TIndexDescription::EType::GlobalSyncVectorKMeansTree,
             "index read doesn't support vector index: " << indexName);
 

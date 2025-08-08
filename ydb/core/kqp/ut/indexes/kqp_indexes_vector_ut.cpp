@@ -62,6 +62,8 @@ Y_UNIT_TEST_SUITE(KqpVectorIndexes) {
                 TResultSetParser parser{set};
                 while (parser.TryNextRow()) {
                     auto value = parser.GetValue("pk");
+                    bool sadsad = value.GetProto().has_int64_value();
+                    std::cerr << sadsad;
                     UNIT_ASSERT_C(value.GetProto().has_int64_value(), value.GetProto().ShortUtf8DebugString());
                     r.push_back(value.GetProto().int64_value());
                 }
@@ -70,7 +72,7 @@ Y_UNIT_TEST_SUITE(KqpVectorIndexes) {
         }
     }
 
-    void DoPositiveQueriesVectorIndex(TSession& session, TTxSettings txSettings, const TString& mainQuery, const TString& indexQuery, bool covered = false) {
+    void DoPositiveQueriesVectorIndex(TSession& session, TTxSettings txSettings, const TString& mainQuery, const TString& indexQuery, bool covered = false, int q = 3) {
         auto toStr = [](const auto& rs) -> TString {
             TStringBuilder b;
             for (const auto& r : rs) {
@@ -78,14 +80,15 @@ Y_UNIT_TEST_SUITE(KqpVectorIndexes) {
             }
             return b;
         };
+        std::cerr << q;
         auto mainResults = DoPositiveQueryVectorIndex(session, txSettings, mainQuery);
         absl::c_sort(mainResults);
-        UNIT_ASSERT_EQUAL_C(mainResults.size(), 3, toStr(mainResults));
+        UNIT_ASSERT_EQUAL_C(mainResults.size(), (size_t)(q), toStr(mainResults));
         UNIT_ASSERT_C(std::unique(mainResults.begin(), mainResults.end()) == mainResults.end(), toStr(mainResults));
 
         auto indexResults = DoPositiveQueryVectorIndex(session, txSettings, indexQuery, covered);
         absl::c_sort(indexResults);
-        UNIT_ASSERT_EQUAL_C(indexResults.size(), 3, toStr(indexResults));
+        UNIT_ASSERT_EQUAL_C(indexResults.size(), (size_t)(q), toStr(indexResults));
         UNIT_ASSERT_C(std::unique(indexResults.begin(), indexResults.end()) == indexResults.end(), toStr(indexResults));
 
         UNIT_ASSERT_VALUES_EQUAL(mainResults, indexResults);
@@ -497,6 +500,217 @@ Y_UNIT_TEST_SUITE(KqpVectorIndexes) {
 
         auto db = kikimr.GetTableClient();
         auto session = DoCreateTableForVectorIndex(db, Nullable);
+        {
+            const TString createIndex(Q_(R"(
+                ALTER TABLE `/Root/TestTable`
+                    ADD INDEX index
+                    GLOBAL USING vector_kmeans_tree
+                    ON (emb) COVER (emb, data)
+                    WITH (distance=cosine, vector_type="uint8", vector_dimension=2, levels=2, clusters=2);
+            )"));
+
+            auto result = session.ExecuteSchemeQuery(createIndex)
+                          .ExtractValueSync();
+
+            UNIT_ASSERT_C(result.IsSuccess(), result.GetIssues().ToString());
+        }
+        {
+            auto result = session.DescribeTable("/Root/TestTable").ExtractValueSync();
+            UNIT_ASSERT_VALUES_EQUAL(result.GetStatus(), NYdb::EStatus::SUCCESS);
+            const auto& indexes = result.GetTableDescription().GetIndexDescriptions();
+            UNIT_ASSERT_EQUAL(indexes.size(), 1);
+            UNIT_ASSERT_EQUAL(indexes[0].GetIndexName(), "index");
+            std::vector<std::string> indexKeyColumns{"emb"};
+            UNIT_ASSERT_EQUAL(indexes[0].GetIndexColumns(), indexKeyColumns);
+            std::vector<std::string> indexDataColumns{"emb", "data"};
+            UNIT_ASSERT_EQUAL(indexes[0].GetDataColumns(), indexDataColumns);
+            const auto& settings = std::get<TKMeansTreeSettings>(indexes[0].GetIndexSettings());
+            UNIT_ASSERT_EQUAL(settings.Settings.Metric, NYdb::NTable::TVectorIndexSettings::EMetric::CosineDistance);
+            UNIT_ASSERT_EQUAL(settings.Settings.VectorType, NYdb::NTable::TVectorIndexSettings::EVectorType::Uint8);
+            UNIT_ASSERT_EQUAL(settings.Settings.VectorDimension, 2);
+            UNIT_ASSERT_EQUAL(settings.Levels, 2);
+            UNIT_ASSERT_EQUAL(settings.Clusters, 2);
+        }
+        DoPositiveQueriesVectorIndexOrderByCosine(session, TTxSettings::SerializableRW(), true /*covered*/);
+    }
+
+    Y_UNIT_TEST(MySimpleVectorIndexOrderByCosineDistanceWithCover) {
+        NKikimrConfig::TFeatureFlags featureFlags;
+        featureFlags.SetEnableVectorIndex(true);
+        
+        auto setting = NKikimrKqp::TKqpSetting();
+        auto serverSettings = TKikimrSettings()
+            .SetFeatureFlags(featureFlags)
+            .SetKqpSettings({setting});
+
+        TKikimrRunner kikimr(serverSettings);
+        kikimr.GetTestServer().GetRuntime()->SetLogPriority(NKikimrServices::BUILD_INDEX, NActors::NLog::PRI_TRACE);
+        kikimr.GetTestServer().GetRuntime()->SetLogPriority(NKikimrServices::FLAT_TX_SCHEMESHARD, NActors::NLog::PRI_TRACE);
+
+        auto db = kikimr.GetTableClient();
+        auto session = DoCreateTableForVectorIndex(db, true);// secind param is nullable
+
+        //
+        
+        const TString createTable (Q_(R"( 
+            create table facts (
+                pk int64,
+                embedding string,
+                data string, 
+                primary key (pk)
+            );
+
+        )"));
+
+
+        const TString initData (Q_(R"( 
+            insert into facts (pk, embedding) values (123, Untag(Knn::ToBinaryStringFloat([1.f, 2.f, 3.f, 4.f]), 'FloatVector'));
+        )"));
+
+
+        const TString addIndex (Q_(R"( 
+            alter table facts add index my_index global using vector_kmeans_tree on (embedding)
+            with (distance=cosine, vector_type=float, vector_dimension=4, clusters=4);
+        )"));
+
+
+        const TString worksQuery (Q_(R"( 
+            select * from facts view my_index
+            order by Knn::CosineDistance(embedding, Untag(Knn::ToBinaryStringFloat([1.f, 2.f, 3.f, 4.f]), 'FloatVector'))
+            limit 10;
+        )"));
+
+        const TString problemQuery (Q_(R"(
+            select * from facts view my_index
+            order by Knn::CosineDistance(embedding, String::HexDecode('0000803F00000040000040400000804001'))
+            limit 10;
+        )"));
+
+
+        const TString fullScanQuery (Q_(R"(
+            select * from facts
+            order by Knn::CosineDistance(embedding, String::HexDecode('0000803F00000040000040400000804001'))
+            limit 10
+        )"));
+
+         const TString problemQueryFixed (Q_(R"(
+            select * from facts view my_index
+            order by Knn::CosineDistance(embedding, Unwrap(String::HexDecode('0000803F00000040000040400000804001')))
+         )"));
+
+        {
+            auto result = session.ExecuteSchemeQuery(createTable)
+            .ExtractValueSync();
+        }
+
+        {
+            auto result = ExecuteDataQuery(session,  initData);
+        }
+
+        {
+            auto result = session.ExecuteSchemeQuery(addIndex)
+            .ExtractValueSync();
+        }
+        
+       // kqp query
+       {
+        auto result = ExecuteDataQuery(session,  problemQuery);
+        UNIT_ASSERT_C(result.IsSuccess(), result.GetIssues().ToString());
+        //auto res = ExecuteDataQuery(session, "select * from facts");
+        //UNIT_ASSERT_C(res.GetResultSet(1)., "");
+
+        //result.GetResultSet(0)
+        CompareYson(R"([
+            [[1u];["One"]];
+            [[2u];["Two"]]
+        ])", FormatResultSetYson(result.GetResultSet(0)));
+        // tx1 = result.GetTransaction();
+        // UNIT_ASSERT(tx1);
+        
+        
+    }
+    return;
+
+        // test functioanal query
+        {
+            // need TABLES
+            //DoPositiveQueryVectorIndex(TSession& session, TTxSettings txSettings, const TString& query, bool covered = false) {
+            //DoPositiveQueriesVectorIndexOrderByCosine(session);
+        }
+
+        // test functioanal query
+        {
+            //DoPositiveQueryVectorIndex(session, TTxSettings::SerializableRW(), const TString& query, bool covered = false) {
+
+            std::string left = "$target";
+            std::string right = "emb";
+            std::string function = "CosineDistance";
+
+            //constexpr std::string_view target = "$target = \"\x67\x71\x03\";";
+            std::string metric = std::format("Knn::{}({}, {})", function, left, right);
+            std::string direction = "";
+            TTxSettings txSettings = TTxSettings::SerializableRW();
+            bool covered = false;
+            // no metric in result
+            {
+                const TString plainQuery = fullScanQuery;
+
+                const TString indexQuery = problemQueryFixed;
+
+                DoPositiveQueriesVectorIndex(session, txSettings, plainQuery, indexQuery, covered, 1);
+            }
+        }
+
+        // test functioanal query
+        {
+            //DoPositiveQueryVectorIndex(session, TTxSettings::SerializableRW(), const TString& query, bool covered = false) {
+
+            std::string left = "$target";
+            std::string right = "emb";
+            std::string function = "CosineDistance";
+
+            //constexpr std::string_view target = "$target = \"\x67\x71\x03\";";
+            std::string metric = std::format("Knn::{}({}, {})", function, left, right);
+            std::string direction = "";
+            TTxSettings txSettings = TTxSettings::SerializableRW();
+            bool covered = false;
+            // no metric in result
+            {
+                const TString plainQuery = fullScanQuery;
+
+                const TString indexQuery = problemQuery;
+
+                DoPositiveQueriesVectorIndex(session, txSettings, plainQuery, indexQuery, covered, 1);
+            }
+        }
+        
+        return;
+        // kqp query
+        {
+            auto result = ExecuteDataQuery(session,  problemQuery);
+            UNIT_ASSERT_C(result.IsSuccess(), result.GetIssues().ToString());
+            //auto res = ExecuteDataQuery(session, "select * from facts");
+            //UNIT_ASSERT_C(res.GetResultSet(1)., "");
+
+            //result.GetResultSet(0)
+            CompareYson(R"([
+                [[1u];["One"]];
+                [[2u];["Two"]]
+            ])", FormatResultSetYson(result.GetResultSet(0)));
+            // tx1 = result.GetTransaction();
+            // UNIT_ASSERT(tx1);
+            
+            
+        }
+        
+
+        {
+            auto result = ExecuteDataQuery(session,  problemQuery);
+        }
+        
+        
+        //
+        return ;
         {
             const TString createIndex(Q_(R"(
                 ALTER TABLE `/Root/TestTable`

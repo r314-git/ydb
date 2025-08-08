@@ -76,7 +76,7 @@ public:
 
     template<typename TNode>
     TNode Cast() const {
-        return Node_ ? TNode(Node_) : TNode(Raw_);
+        return Node_ ? TNode(Node_) : TNode(Raw_); // r314
     }
 
 private:
